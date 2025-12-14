@@ -1,8 +1,9 @@
-const axios = require('axios');
+ const axios = require('axios');
 
+// --- Configuration des services API (Priorité haute à basse) ---
 async function fetchFromAI(url, params) {
   try {
-    // Augmentation du timeout pour plus de fiabilité sur les proxies
+    // Timeout élevé pour les proxies
     const response = await axios.get(url, { params, timeout: 60000 }); 
     return response.data;
   } catch (error) {
@@ -13,12 +14,13 @@ async function fetchFromAI(url, params) {
 
 async function getAIResponse(input, userName, messageID) {
   const services = [
-    // API Gemini Proxy (Prioritaire)
+    // 1. API Gemini Proxy (Priorité Haute)
     { url: 'https://arychauhann.onrender.com/api/gemini-proxy2', params: { prompt: input } },
-    // API Hercai (Fallback)
+    // 2. API Hercai (Fallback)
     { url: 'https://ai-chat-gpt-4-lite.onrender.com/api/hercai', params: { question: input } }
   ];
 
+  // Message de bienvenue par défaut
   let response = `⧠ 𝑺𝑎𝒍𝒖𝒕 ☞︎︎︎${userName}☜︎︎︎ ! 𝑰𝒍 𝒔𝑒𝒎𝒃𝒍𝑒 𝒒𝒖𝑒 𝒋𝑒 𝒏'𝒂𝒊 𝒑𝒂𝒔 𝒓é𝒖𝒔𝒔𝒊 𝒂̀ 𝒄𝒐𝒏𝒕𝒂𝒄𝒕𝒆𝒓 𝒍𝒆𝒔 𝒔𝒆𝒓𝒗𝒆𝒖𝒓𝒔 𝒅'𝑰𝑨. 𝑽𝒆𝒖𝒊𝒍𝒍𝒆𝒛 𝒓é𝒆𝒔𝒔𝒂𝒚𝒆𝒓 𝒑𝒍𝒖𝒔 𝒕𝒂𝒓𝒅.`;
   let currentIndex = 0;
 
@@ -27,57 +29,71 @@ async function getAIResponse(input, userName, messageID) {
     const data = await fetchFromAI(service.url, service.params);
     
     if (data) {
+        // Vérifie les formats de réponse courants (result pour Gemini-proxy, reply/gpt4/response pour Hercai/autres)
         const apiReply = data.result || data.reply || data.gpt4 || data.response; 
         
         if (apiReply && typeof apiReply === 'string' && apiReply.trim().length > 0) {
             response = apiReply;
-            break;
+            break; 
         }
     }
-    currentIndex = (currentIndex + 1) % services.length; 
+    currentIndex = (currentIndex + 1) % services.length;
   }
 
   return { response, messageID };
 }
 
+// --- Configuration du Module ---
 module.exports = {
   config: {
-    name: 'shisui',
-    aliases: ['ai'], // Assurez-vous d'avoir l'alias 'ai' si vous voulez qu'il réponde à 'ai'
-    author: 'Master Charbel',
+    name: 'ai', // Nom principal
+    aliases: ['aesther', 'ae', 'jokers'],
+    author: 'Samycharles (Modifié par Gemini)',
     role: 0,
     category: 'ai',
-    shortDescription: 'ai to ask anything',
-    // Le guide est moins pertinent si on supprime le préfixe
+    shortDescription: 'Parlez à l\'IA sans utiliser de prefixe.',
+    guide: { en: "Tapez simplement ai <votre question>" }
   },
   
-  // ⚠️ Fonction désactivée. onStart s'active uniquement avec le préfixe.
-  onStart: null, 
+  // --- onStart (Utilisation avec préfixe: !ai question) ---
+  onStart: async function ({ api, event, args }) {
+    const input = args.join(' ').trim();
+    if (!input) {
+      api.sendMessage("⧠ 𝑺𝑎𝒍𝒖𝒕 ! 𝑷𝒐𝒔𝑒 𝒎𝒐𝒊 𝒖𝒏𝑒 𝒒𝒖𝑒𝒔𝒕𝒊𝒐𝒏.", event.threadID, event.messageID);
+      return;
+    }
+
+    api.getUserInfo(event.senderID, async (err, ret) => {
+      if (err) return console.error(err);
+      const userName = ret[event.senderID].name;
+      
+      api.setMessageReaction("⏳", event.messageID, () => {}, true);
+
+      const { response, messageID } = await getAIResponse(input, userName, event.messageID);
+      
+      api.sendMessage(`❮⧠❯━━━━━━━━━━❮◆❯\n❮◆❯━━━━━━━━━━❮⧠❯\nSalut ${userName} 🤩 :\n\n${response}\n\n╰┈┈┈➤⊹⊱✰✫✫✰⊰⊹`, event.threadID, messageID, (err) => {
+           if (!err) {
+               api.setMessageReaction("✅", event.messageID, () => {}, true);
+           } else {
+               api.setMessageReaction("❌", event.messageID, () => {}, true);
+           }
+      });
+    });
+  },
   
+  // --- onChat (Utilisation sans préfixe: ai question) ---
   onChat: async function ({ api, event, message }) {
     const messageContent = event.body.trim();
     
-    // 1. Définir les mots-clés de déclenchement (sans préfixe)
-    // Ici: 'shisui' et 'ai'
-    const keywords = ['shisui', 'ai'];
+    // Regex pour vérifier si le message commence par un alias (ai, aesther, ae, jokers)
+    // et capture la question.
+    const match = messageContent.match(/^(ai|aesther|ae|jokers)\s+(.*)/i);
     
-    // 2. Utiliser une RegEx pour trouver si le message commence par un des mots-clés + un espace
-    const keywordsRegex = new RegExp(`^(${keywords.join('|')})\\s+(.*)`, 'i');
-    const match = messageContent.match(keywordsRegex);
-    
-    // S'il n'y a pas de correspondance (pas de mot-clé au début)
+    // Si ça ne commence pas par un mot-clé ou s'il n'y a pas de question après, on ignore.
     if (!match) return; 
-
-    // 3. Extraire la question (match[2] capture le reste du message)
-    const input = match[2].trim();
     
-    // Si la question est vide après le mot-clé (ex: juste "ai" ou "shisui"), on ignore.
-    if (!input) {
-         // Optionnel: Répondre avec le message d'aide si l'input est vide
-         const initialResponse = `⧠ 𝑺𝑎𝒍𝒖𝒕 ! 𝑷𝒐𝒔𝑒 𝒎𝒐𝒊 𝒖𝒏𝑒 𝒒𝒖𝑒𝒔𝒕𝒊𝒐𝒏.`;
-         api.sendMessage(initialResponse, event.threadID, event.messageID);
-         return;
-    }
+    const input = match[2].trim(); 
+    if (!input) return;
 
     api.getUserInfo(event.senderID, async (err, ret) => {
       if (err) return console.error(err);
@@ -87,7 +103,7 @@ module.exports = {
 
       const { response } = await getAIResponse(input, userName, event.messageID);
       
-      // Réponse finale sans préfixe
+      // Répond au message
       message.reply(`❮⧠❯━━━━━━━━━━❮◆❯\n❮◆❯━━━━━━━━━━❮⧠❯\nSalut ${userName} 🤩 :\n\n${response}\n\n❮⧠❯━━━━━━━━━━❮◆❯\n❮◆❯━━━━━━━━━━❮⧠❯`, (err) => {
            if (!err) {
                api.setMessageReaction("✅", event.messageID, () => {}, true);
